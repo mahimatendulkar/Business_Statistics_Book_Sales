@@ -1,0 +1,311 @@
+---
+title: 'Business Statistics'
+author: 'Mahima Tendulkar'
+output:
+  html_document:
+    toc: yes
+    toc_depth: 3
+    fig_width: 10 
+    fig_height: 6
+    
+---
+
+```{r setup, message=FALSE}
+# R Packages for Question1 and Question2
+library(tidyverse)
+library(dplyr)
+options(width = 600)
+library(data.table) # for as.data.table()
+library(emmeans) # for emmeans() and pairs()
+library(gridExtra) # for grid.arrange()
+library(knitr) # for kable()
+library(kableExtra) # for cell_spec()
+library(ggplot2)
+library(Hmisc) # for correlation functions
+
+```
+
+# Book Sales
+
+## Section 1
+The following section of the report fulfills the requests of the managers of a publishing company.
+
+The requests are summarized below:
+
+1. Find whether books from different genres have different daily sales on average.
+
+2. Do books have more/fewer sales depending on their average review scores and the total number of reviews?
+
+3. Find the effect of sale price upon the number of sales, and is this different across genres
+
+
+The data dictionary of the dataset used is explained in the section below:
+
+
+### Data Dictionary
+
+Variable | Description
+------------- | -------------
+sold by       | Name of the service that sold the particular e-book
+publisher.type| Publisher type: amazon, big five, indie, single author, small/medium
+genre         | The category or style of a book
+avg.review    | Average of the reviews across all days in the given time span.
+daily.sales   | Average number of sales (minus refunds) across all days in the given time period
+total.reviews | Total number of reviews across all days in the given time span.
+sale.price    | Average price for which the book sold across all days in the given time period.
+
+---
+
+
+### Data Read and Preparation
+```{r, message=FALSE, warning=FALSE}
+#Read the dataset publisher_sales.csv
+data.books <- read_csv("publisher_sales.csv")
+
+#Check Structure
+#str(data.books)
+
+#Convert columns as factors
+columns.books <- c("publisher.type","genre")
+data.books[columns.books] <- lapply(data.books[columns.books],as.factor)
+
+#Check structure 
+#str(data.books)
+
+#Check summary
+summary(data.books[c("publisher.type","genre","avg.review","daily.sales","total.reviews","sale.price")])
+
+```
+
+### Data Understanding
+```{r}
+#Plot indicating the distribution of each publisher type
+ggplot(data.books, aes(x=publisher.type)) + geom_bar(colour='black') + labs(x="Publisher Type" , y="Number of Books Sold" ,title = "Number books sold by each publisher type", caption = "Figure 1: Plot indicating the distribution of number of books sold by each publisher type") +
+  theme(plot.caption = element_text(size=10,hjust=0.5))
+```
+
+### Regression Models
+```{r, warning=FALSE, message=FALSE}
+#Request Do books from different genres have different daily sales on average?
+
+#Table for summarizing the Average daily sales for each genre of book
+book.table <- data.books %>% group_by(genre) %>%
+  summarise(No_of_Books= n(), Average_daily_sales = mean(daily.sales))
+
+#Print the book.table
+print(as.data.table(book.table))
+
+#Box plot for better understanding the daily sales distribution for each genre
+ggplot(data.books, aes(x=daily.sales, fill=genre)) + facet_grid(genre~.) + geom_boxplot() +labs(title = "Distribution indicating the daily sales of each genre",x="Daily Sales", caption= "Figure 2: Distribution of daily sales for each genre/book-category") +
+  theme(plot.caption = element_text(size=10,hjust=0.5))
+
+#perform two-way ANOVA
+m.daily.sales.by.genre <- lm(daily.sales ~ genre  , data=data.books)
+summary(m.daily.sales.by.genre)
+head(cbind(as.data.frame(book.table[c("genre","Average_daily_sales")]), model.matrix(m.daily.sales.by.genre)))
+
+(m.daily.sales.by.genre.emm <- emmeans(m.daily.sales.by.genre, ~genre))
+(m.daily.sales.by.genre.pairs <- pairs(m.daily.sales.by.genre.emm)  )
+
+(m.daily.sales.by.genre.pairs <- confint(pairs(m.daily.sales.by.genre.emm)))
+
+
+#Request 2: Do books have more/fewer sales depending upon their average review scores and total number of reviews?
+
+#filter reviews '0'
+data.books.filtered <- data.books %>% filter(total.reviews != 0)
+
+#Correlation matrix for selected columns
+rcorr(as.matrix(select(data.books.filtered, daily.sales, avg.review , total.reviews)))
+
+#To better understand the correlation between the variables.
+grid.arrange(
+ggplot(data.books.filtered, aes(y=daily.sales, x=total.reviews)) + geom_point() + labs(x="Total Reviews", y="Daily Sales", title="Distribution of Daily sales v/s Total reviews", subtitle= "Blue line is the best-fitting regression line") + geom_smooth(method=lm),
+
+ggplot(data.books.filtered, aes(y=daily.sales, x=avg.review)) + geom_point() + labs(x="Average Review", y="Daily Sales", title="Distribution of Daily sales v/s Avg review", subtitle= "Blue line is the best-fitting regression line" , caption = "Figure 3: Plots to explain linear model") +
+  theme(plot.caption = element_text(size=10,hjust=0.5)) + geom_smooth(method=lm)
+)
+
+#Linear Regression model 
+m.sales.by.avgreview.totalreviews <- lm(daily.sales~avg.review + total.reviews, data=data.books.filtered)
+summary(m.sales.by.avgreview.totalreviews)
+
+# To study the Interaction between avg.review and total.reviews
+m.sales.by.avgreview.totalreviews.interaction <- lm(daily.sales~avg.review * total.reviews, data=data.books.filtered)
+summary(m.sales.by.avgreview.totalreviews.interaction)
+
+#ANOVA to compare 2 models
+anova(m.sales.by.avgreview.totalreviews, m.sales.by.avgreview.totalreviews.interaction)
+
+#Using Estimation approach
+cbind(coefficient= coef(m.sales.by.avgreview.totalreviews),confint(m.sales.by.avgreview.totalreviews))
+
+
+# Request 3: What is the effect of sale price upon the number of sales, and is this different across genres?
+
+#Summarise
+book.table.genre <- data.books %>% group_by(genre) %>%
+  summarise(No_of_Books_sold= n(), Average_Sale_Price = mean(sale.price))
+
+#print book.table.genre
+print(as.data.table(book.table.genre))
+
+# Linear model
+m.sales.by.price.genre <- lm(daily.sales~sale.price+genre, data=data.books)
+summary(m.sales.by.price.genre)
+
+# Interaction
+m.sales.by.price.genre.interaction <- lm(daily.sales~sale.price*genre, data=data.books)
+summary(m.sales.by.price.genre.interaction)
+
+# Model comparison using anova
+anova(m.sales.by.price.genre,m.sales.by.price.genre.interaction)
+
+# Plot for visualisation of linear relationship
+ggplot(data.books, aes(y=daily.sales, x=sale.price)) + geom_point() + labs(x="Sale Price", y="Daily Sales", title="Distribution of Daily sales v/s Sale price", subtitle= "Blue line is the best-fitting regression line", caption = "Figure 4: Plots to explain linear model") +
+  theme(plot.caption = element_text(size=10,hjust=0.5)) + geom_smooth(method=lm)
+
+```
+
+## Section 2
+
+#### Introduction and brief data analysis
+This section presents the outcome of an extensive analysis performed on the Publisher Sales data. The data used for analysis provides information about e-book sales by 13 different publishers over many months. It consists of 6000 unique observations, each representing a book's sales, reviews, and publisher details. As observed from the summary given below, we can make the following notes about the data:
+
+1. There are five different publisher types: amazon, big five, indie, single author, and small/medium.
+
+2. Observations are categorized into three different genres: children's, fiction, and non-fiction.
+
+3. Average Review is on a scale of (0-5) with 0 being the lowest and five being the highest.
+
+4. Daily sales have a negative minimum value (since there might be refunds made in the given time period while the purchase was made in the previous period) 
+
+5. Some books have '0' total reviews, which means that they are not rated yet.
+
+```{r,echo=FALSE}
+summary(data.books[c("publisher.type","genre","avg.review","daily.sales","total.reviews","sale.price")])
+```
+
+To get a clear understanding of the data, a graph was made. 
+Below is the plot representing the distribution of each publisher type (Figure 1). It can be inferred that the maximum number of e-books were sold by small/medium publisher types, while amazon sold the least number of e-books.
+
+```{r echo=FALSE}
+#Plot indicating the distribution of each publisher type
+ggplot(data.books, aes(x=publisher.type)) + geom_bar(colour='black') + labs(x="Publisher Type" , y="Number of Books Sold" ,title = "Number books sold by each publisher type", caption = "Figure 1: Plot indicating the distribution of number of books sold by each publisher type") +
+  theme(plot.caption = element_text(size=10,hjust=0.5)) 
+```
+
+### Request 1: Do books from different genres have different daily sales on average?
+
+To Find whether books from different genres have different daily sales on average, the mean daily sales was calculated for each genre. The below table represents the Genre, No_of_Books in each category, and their Average_daily_sales. It can be observed that the fiction genre was the most popular choice among the readers, while non-fiction was secondary, followed by children's.
+
+```{r , echo=FALSE}
+print(as.data.table(book.table))
+
+```
+
+The daily sales distribution can be better understood with the below box plot. 
+
+```{r, echo=FALSE}
+
+ggplot(data.books, aes(x=daily.sales, fill=genre)) + facet_grid(genre~.) + geom_boxplot() +labs(title = "Distribution indicating the daily sales of each genre",x="Daily Sales", caption= "Figure 2: Distribution of daily sales for each genre/book-category") +
+  theme(plot.caption = element_text(size=10,hjust=0.5)) 
+
+```
+
+In the above plot (Figure 2), red indicates the children's genre, green indicates fiction, and blue indicates non-fiction. The black line in the middle represents the average of each category. Another thing can be observed here that is the outlier points of daily sales, which are much away from the range otherwise. This shows that daily sales of certain books is too high or too low in comparison to other books of same genre. To further investigate the effect of each genre on daily sales, a linear model and ANOVA test were used. The summary results are as follows:
+
+```{r, echo=FALSE}
+#perform two-way ANOVA
+model_aov <- lm(daily.sales ~ genre  , data=data.books) 
+summary(model_aov) 
+```
+
+From this summary of the model, we can infer that there is a statistically significant difference between the daily sales of 3 categories/genres. The difference between sales of the children's category and the non-fiction category is 20.28, and the difference between the sales of the fiction category and the children's category is 50.30. 
+
+### Request 2: Do books have more/fewer sales depending upon their average review scores and total number of reviews?
+
+In this section, statistical analysis has been carried out to find whether books have more/fewer sales depending on their average review scores and the total number of reviews. 
+
+To better understand the effect of book reviews on sales, the books that are not rated, i.e., books with "0" total reviews, are filtered out.
+
+Below is the summary of the linear model to understand the impact of average and total reviews on daily sales:
+```{r, echo=FALSE}
+
+#Linear Regression model summary
+summary(m.sales.by.avgreview.totalreviews)
+
+```
+
+From the above summary, it can be inferred that the impact of the average review on the daily sale is statistically insignificant. But the total number of reviews' effect on daily sales is highly significant. Keeping average review constant, for every increase in total reviews, it causes 0.56 increase in the daily sales.
+
+To better understand the difference, the visualization representing the same results is shown in (Figure 3).
+The distribution of daily sales v/s total reviews plot has a best-fitted line showing a positive slope, which means there is a positive correlation between the two. While in the second plot, we can see that daily sales and avg reviews do not have any positive or negative correlation. 
+
+```{r,echo=FALSE, warning=FALSE, message=FALSE}
+
+grid.arrange(
+ggplot(data.books.filtered, aes(y=daily.sales, x=total.reviews)) + geom_point() + labs(x="Total Reviews", y="Daily Sales", title="Distribution of Daily sales v/s Total reviews", subtitle= "Blue line is the best-fitting regression line") + geom_smooth(method=lm),
+
+ggplot(data.books.filtered, aes(y=daily.sales, x=avg.review)) + geom_point() + labs(x="Average Review", y="Daily Sales", title="Distribution of Daily sales v/s Avg review", subtitle= "Blue line is the best-fitting regression line" , caption = "Figure 3: Plots to explain linear model") +
+  theme(plot.caption = element_text(size=10,hjust=0.5)) + geom_smooth(method=lm)
+
+)
+
+```
+
+In order to understand the combined effect of both the variables (average review and total reviews) on the outcome variable (daily sales), another linear model with the interaction term was used. But when the model was compared with the above-mentioned model, there was no significant difference in daily sales considering the combined effect of both the total reviews and avg reviews.
+
+
+### Request 3: What is the effect of sale price upon the number of sales, and is this different across genres?
+ 
+In this section, the analysis was carried out to study the effect of the sales price on the number of sales and to find whether it is different for different genres. 
+
+The below table shows the average sale price of books sold in each genre. We can observe that the average sale price is highest for children's books while lowest for fiction books, while average daily sales follow an exctly opposite trend.
+
+
+```{r, echo=FALSE}
+
+book.table.genre <- data.books %>% group_by(genre) %>%
+  summarise(No_of_Books_sold= n(), Average_Sale_Price = mean(sale.price) , Average_daily_sale = mean(daily.sales))
+
+print(as.data.table(book.table.genre))
+
+```
+
+To further understand the effect of the sale price and genre on daily sales, a linear model was implemented, and the outcome/summary of the model is as follows:
+
+```{r, echo=FALSE}
+
+#Linear model
+m.sales.by.price.genre <- lm(daily.sales~sale.price+genre, data=data.books)
+summary(m.sales.by.price.genre)
+
+```
+From the model summary, we can see that genre of the book and the sale price have a statistically significant impact on daily sales. For every unit increase in sales price, the daily sales decreases by 0.832 (By keeping the genre same). While if we keep the sales price same and analyze the impact of genre, then for every increase in books of fiction category, daily sales increases by 48.671. Similarly, for every unit increase in non-fiction category books, the daily sales increases by 18.56. Here child category sales is used as reference for fiction and non-fiction.
+
+To further understand the cumulative impact of both factors on daily sales, a linear model with interaction was implemented, which showed that an increase in the sale price of all genre books and an increase in the number of these books would have a positive effect on daily sales. The same is indicated by the summary of the model given below:
+
+
+```{r, echo=FALSE}
+#Interaction
+m.sales.by.price.genre.interaction <- lm(daily.sales~sale.price*genre, data=data.books)
+summary(m.sales.by.price.genre.interaction)
+
+```
+
+Both the models above were compared using the ANOVA test, and it was found that the second model fits significantly better than the first one and hence provides better results.
+
+```{r, echo=FALSE}
+anova(m.sales.by.price.genre,m.sales.by.price.genre.interaction)
+```
+
+To better understand the effect of sales price and daily sales, it is visualized like below (Figure 4).
+
+```{r,echo=FALSE}
+
+ggplot(data.books, aes(y=daily.sales, x=sale.price)) + geom_point() + labs(x="Sale Price", y="Daily Sales", title="Distribution of Daily sales v/s Sale price", subtitle= "Blue line is the best-fitting regression line", caption = "Figure 4: Plots to explain linear model") +
+  theme(plot.caption = element_text(size=10,hjust=0.5)) + geom_smooth(method=lm)
+
+```
+From the graph (Figure 4), it can be inferred that there is a negative correlation between the sales price and daily sales, i.e., daily sales decreases when the sales price increases.
